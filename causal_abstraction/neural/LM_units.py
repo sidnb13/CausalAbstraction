@@ -13,14 +13,14 @@ the full featurizer + feature indexing machinery.
 
 from typing import List, Union
 
-from neural.model_units import (  # noqa: E402  (import after path hack)
+from causal_abstraction.neural.featurizers import Featurizer
+from causal_abstraction.neural.model_units import (
     AtomicModelUnit,
     Component,
     ComponentIndexer,
-    Featurizer,
     StaticComponent,
 )
-from neural.pipeline import LMPipeline
+from causal_abstraction.neural.pipeline import LMPipeline
 
 
 # --------------------------------------------------------------------------- #

@@ -3,29 +3,23 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-import collections
-import gc
 import json
 import os
-import random
 from itertools import chain
-from typing import Callable, Dict, List, Tuple, Union
+from typing import Callable, Dict, List, Optional
 
 import numpy as np
-import pyvene as pv
 import torch
-from causal.causal_model import CausalModel
-from causal.counterfactual_dataset import CounterfactualDataset
-from datasets import Dataset
-from experiments.pyvene_core import (
+from sklearn.decomposition import TruncatedSVD
+
+from causal_abstraction.causal.causal_model import CausalModel
+from causal_abstraction.experiments.pyvene_core import (
     _collect_features,
     _run_interchange_interventions,
     _train_intervention,
 )
-from neural.model_units import *
-from neural.pipeline import Pipeline
-from sklearn.decomposition import TruncatedSVD
-from tqdm import tqdm, trange
+from causal_abstraction.neural.model_units import *
+from causal_abstraction.neural.pipeline import Pipeline
 
 
 class InterventionExperiment:
@@ -87,7 +81,7 @@ class InterventionExperiment:
         self,
         datasets,
         verbose: bool = False,
-        target_variables_list: List[List[str]] = None,
+        target_variables_list: Optional[List[List[str]]] = None,
         save_dir=None,
     ) -> Dict:
         """

@@ -5,19 +5,21 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 import gc
 import logging
 import os
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 import torch
-from causal.causal_model import CausalModel
-from experiments.intervention_experiment import *
-from experiments.pyvene_core import _prepare_intervenable_inputs
-from neural.featurizers import *
-from neural.LM_units import *
-from neural.model_units import *
-from neural.pipeline import LMPipeline
+
+from causal_abstraction.causal.causal_model import CausalModel
+from causal_abstraction.experiments.intervention_experiment import (
+    InterventionExperiment,
+)
+from causal_abstraction.experiments.pyvene_core import _prepare_intervenable_inputs
+from causal_abstraction.neural.featurizers import Featurizer
+from causal_abstraction.neural.LM_units import ResidualStream, TokenPosition
+from causal_abstraction.neural.pipeline import LMPipeline
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -232,7 +234,7 @@ class PatchResidualStream(InterventionExperiment):
         layers: List[int],
         token_positions: List[TokenPosition],
         checker: Callable,
-        featurizers: Dict[Tuple[int, str], Featurizer] = None,
+        featurizers: Optional[Dict[Tuple[int, str], Featurizer]] = None,
         loss_and_metric_fn: Callable = LM_loss_and_metric_fn,
         **kwargs,
     ):

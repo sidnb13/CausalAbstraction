@@ -73,7 +73,7 @@ class Featurizer:
         featurizer: torch.nn.Module = IdentityFeaturizerModule(),
         inverse_featurizer: torch.nn.Module = IdentityInverseFeaturizerModule(),
         *,
-        n_features: int | None = None,
+        n_features: Optional[int] = None,
         id: str = "null",
     ):
         self.featurizer = featurizer

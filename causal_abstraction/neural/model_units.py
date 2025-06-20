@@ -17,7 +17,7 @@ This file introduces:
 
 from typing import List, Optional, Union
 
-from neural.featurizers import Featurizer
+from causal_abstraction.neural.featurizers import Featurizer
 
 
 class ComponentIndexer:

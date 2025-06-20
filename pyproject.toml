@@ -52,7 +52,6 @@ dev = [
 ]
 test = [
     "pytest>=8.0.0",
-    "pytest-cov>=4.1.0",
 ]
 
 [project.urls]
@@ -85,37 +84,3 @@ select = ["UP", "TID", "I", "F", "E", "ARG", "SIM", "RET", "LOG", "T20"]
 "demos/*" = ["T20"]
 "tests/*" = ["T20"]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = [
-    "--strict-markers",
-    "--strict-config",
-    "--cov=causal_abstraction",
-    "--cov-report=term-missing",
-    "--cov-report=html",
-]
-
-[tool.coverage.run]
-source = ["causal_abstraction"]
-omit = [
-    "*/tests/*",
-    "*/test_*",
-    "*/__pycache__/*",
-]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "if self.debug:",
-    "if settings.DEBUG",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if 0:",
-    "if __name__ == .__main__.:",
-    "class .*\\bProtocol\\):",
-    "@(abc\\.)?abstractmethod",
-] 
