@@ -1,20 +1,14 @@
 # tests/test_pyvene_core/conftest.py
 
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-
 import pytest
 import torch
 import random
 import numpy as np
-from collections import defaultdict
 
-from causal.causal_model import CausalModel
-from causal.counterfactual_dataset import CounterfactualDataset
-from neural.pipeline import LMPipeline
-from neural.LM_units import TokenPosition, ResidualStream
-from neural.model_units import AtomicModelUnit
+from causal_abstraction.causal.causal_model import CausalModel
+from causal_abstraction.causal.counterfactual_dataset import CounterfactualDataset
+from causal_abstraction.neural.pipeline import LMPipeline
+from causal_abstraction.neural.LM_units import TokenPosition, ResidualStream
 
 
 @pytest.fixture(scope="session")

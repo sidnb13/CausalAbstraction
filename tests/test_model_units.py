@@ -10,8 +10,8 @@ pytest unit-tests for the core abstractions in model_units.py
 import pytest
 import torch
 
-import neural.model_units as MU
-import neural.featurizers as F  # the module we just rewrote
+import causal_abstraction.neural.model_units as MU
+import causal_abstraction.neural.featurizers as F  # the module we just rewrote
 
 # --------------------------------------------------------------------------- #
 #  Helpers                                                                     #

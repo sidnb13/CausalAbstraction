@@ -8,8 +8,8 @@ import torch
 import collections
 import gc
 
-from experiments.filter_experiment import FilterExperiment
-from causal.counterfactual_dataset import CounterfactualDataset
+from causal_abstraction.experiments.filter_experiment import FilterExperiment
+from causal_abstraction.causal.counterfactual_dataset import CounterfactualDataset
 
 
 # ---------------------- Fixtures ---------------------- #

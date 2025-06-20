@@ -8,24 +8,22 @@ representation space at that location.
 
 This file introduces:
 
-* `ComponentIndexer` – a callable that yields dynamic indices, e.g., token 
+* `ComponentIndexer` – a callable that yields dynamic indices, e.g., token
   positions in a transformer.
 * `Component` / `StaticComponent` – address a tensor slice inside the model.
 * `AtomicModelUnit` – pairs a Component with a Featurizer (+ optional
   feature-subset).
 """
 
-from typing import List, Union, Optional
+from typing import List, Optional, Union
 
-import pyvene as pv
-
-from neural.featurizers import Featurizer, SubspaceFeaturizer 
+from neural.featurizers import Featurizer
 
 
 class ComponentIndexer:
     """Callable wrapper that returns location indices for a given *input*.
     This is used to specify the *where* in the model to intervene, e.g.,
-    the *input* might be a batch of tokenized text with indices that are 
+    the *input* might be a batch of tokenized text with indices that are
     the positions of the tokens to be intervened upon.
     """
 
@@ -122,9 +120,7 @@ class Component:
         )
 
     def __hash__(self):
-        return hash(
-            (self.layer, self.component_type, self.unit, self._indices_func.id)
-        )
+        return hash((self.layer, self.component_type, self.unit, self._indices_func.id))
 
 
 class StaticComponent(Component):
@@ -142,14 +138,14 @@ class StaticComponent(Component):
 
 class AtomicModelUnit:
     """A (Component, Featurizer, feature indices) triple.
-    
+
     This is the basic unit of intervention in this library.
-    It specifies a *location* in the model (Component) 
+    It specifies a *location* in the model (Component)
     and a *feature space* (Featurizer) to be used for intervention.
     The `feature_indices` are an optional subset of the features
     returned by the featurizer.  If not specified, all features
-    are used.  
-    
+    are used.
+
     The `shape` is reserved for downstream sub-space
     creation helpers.  The `id` is a human-readable identifier
     for the unit, used for diagnostics and printing.

@@ -7,19 +7,12 @@ Run with:
 
 from __future__ import annotations
 
-import math
-import os
-from pathlib import Path
 from typing import Tuple
-
-import torch
-import pytest
-
-import neural.featurizers as F  # the module we just rewrote
-
-import sys
 from pathlib import Path
-sys.path.append(str(Path(__file__).resolve().parent.parent))
+import pytest
+import torch
+
+import causal_abstraction.neural.featurizers as F  # the module we just rewrote
 
 
 # --------------------------------------------------------------------------- #

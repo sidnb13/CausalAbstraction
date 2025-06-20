@@ -9,10 +9,10 @@ Key ideas
 ---------
 
 * **Featurizer** – a lightweight wrapper holding:
-    • a forward `featurizer` module that maps a tensor **x → (f, error)**  
+    • a forward `featurizer` module that maps a tensor **x → (f, error)**
       where *error* is the reconstruction residual (useful for lossy
-      featurizers such as sparse auto-encoders);  
-    • an `inverse_featurizer` that re-assembles the original space  
+      featurizers such as sparse auto-encoders);
+    • an `inverse_featurizer` that re-assembles the original space
       **(f, error) → x̂**.
 
 * **Interventions** – three higher-order factory functions build PyVENE
@@ -26,8 +26,8 @@ All public classes / functions below carry PEP-257-style doc-strings.
 
 from typing import Optional, Tuple
 
-import torch
 import pyvene as pv
+import torch
 
 
 # --------------------------------------------------------------------------- #
@@ -135,8 +135,8 @@ class Featurizer:
         featurizer_class = self.featurizer.__class__.__name__
 
         if featurizer_class == "SAEFeaturizerModule":
-            #SAE featurizers are to be loaded from sae_lens
-            return None, None
+            # SAE featurizers are to be loaded from sae_lens
+            return None, None  # type: ignore
 
         inverse_featurizer_class = self.inverse_featurizer.__class__.__name__
 
@@ -144,10 +144,10 @@ class Featurizer:
         additional_config = {}
         if featurizer_class == "SubspaceFeaturizerModule":
             additional_config["rotation_matrix"] = (
-                self.featurizer.rotate.weight.detach().clone()
+                self.featurizer.rotate.weight.detach().clone()  # type: ignore
             )
             additional_config["requires_grad"] = (
-                self.featurizer.rotate.weight.requires_grad
+                self.featurizer.rotate.weight.requires_grad  # type: ignore
             )
 
         model_info = {
@@ -191,7 +191,7 @@ class Featurizer:
 
             # Re-build a parametrised orthogonal layer with identical shape.
             in_dim, out_dim = rot.shape
-            rotate_layer = pv.models.layers.LowRankRotateLayer(
+            rotate_layer = pv.models.layers.LowRankRotateLayer(  # type: ignore
                 in_dim, out_dim, init_orth=False
             )
             rotate_layer.weight.data.copy_(rot)
@@ -202,9 +202,9 @@ class Featurizer:
             inverse = SubspaceInverseFeaturizerModule(rotate_layer)
 
             # Sanity-check weight shape
-            assert (
-                featurizer.rotate.weight.shape == rot.shape
-            ), "Rotation-matrix shape mismatch after deserialisation."
+            assert featurizer.rotate.weight.shape == rot.shape, (
+                "Rotation-matrix shape mismatch after deserialisation."
+            )
         elif featurizer_class == "IdentityFeaturizerModule":
             featurizer = IdentityFeaturizerModule()
             inverse = IdentityInverseFeaturizerModule()
@@ -249,7 +249,7 @@ def build_feature_interchange_intervention(
             if subspaces is None or _subspace_is_all_none(subspaces):
                 f_out = f_src
             else:
-                f_out = pv.models.intervention_utils._do_intervention_by_swap(
+                f_out = pv.models.intervention_utils._do_intervention_by_swap(  # type: ignore
                     f_base,
                     f_src,
                     "interchange",
@@ -266,9 +266,7 @@ def build_feature_interchange_intervention(
     return FeatureInterchangeIntervention
 
 
-def build_feature_collect_intervention(
-    featurizer: torch.nn.Module, featurizer_id: str
-):
+def build_feature_collect_intervention(featurizer: torch.nn.Module, featurizer_id: str):
     """Return a `CollectIntervention` operating in feature space."""
 
     class FeatureCollectIntervention(pv.CollectIntervention):
@@ -278,7 +276,7 @@ def build_feature_collect_intervention(
 
         def forward(self, base, source=None, subspaces=None):
             f_base, _ = self._featurizer(base)
-            return pv.models.intervention_utils._do_intervention_by_swap(
+            return pv.models.intervention_utils._do_intervention_by_swap(  # type: ignore
                 f_base,
                 source,
                 "collect",
@@ -321,8 +319,8 @@ def build_feature_mask_intervention(
             return self.temperature
 
         def set_temperature(self, temp: float | torch.Tensor):
-            self.temperature = (
-                torch.as_tensor(temp, dtype=self.mask.dtype).to(self.mask.device)
+            self.temperature = torch.as_tensor(temp, dtype=self.mask.dtype).to(
+                self.mask.device
             )
 
         # ------------------------- forward ------------------- #
@@ -367,7 +365,7 @@ def build_feature_mask_intervention(
 class SubspaceFeaturizerModule(torch.nn.Module):
     """Linear projector onto an orthogonal *rotation* sub-space."""
 
-    def __init__(self, rotate_layer: pv.models.layers.LowRankRotateLayer):
+    def __init__(self, rotate_layer: pv.models.layers.LowRankRotateLayer):  # type: ignore
         super().__init__()
         self.rotate = rotate_layer
 
@@ -381,7 +379,7 @@ class SubspaceFeaturizerModule(torch.nn.Module):
 class SubspaceInverseFeaturizerModule(torch.nn.Module):
     """Inverse of :class:`SubspaceFeaturizerModule`."""
 
-    def __init__(self, rotate_layer: pv.models.layers.LowRankRotateLayer):
+    def __init__(self, rotate_layer: pv.models.layers.LowRankRotateLayer):  # type: ignore
         super().__init__()
         self.rotate = rotate_layer
 
@@ -401,15 +399,15 @@ class SubspaceFeaturizer(Featurizer):
         trainable: bool = True,
         id: str = "subspace",
     ):
-        assert (
-            shape is not None or rotation_subspace is not None
-        ), "Provide either `shape` or `rotation_subspace`."
+        assert shape is not None or rotation_subspace is not None, (
+            "Provide either `shape` or `rotation_subspace`."
+        )
 
         if shape is not None:
-            rotate = pv.models.layers.LowRankRotateLayer(*shape, init_orth=True)
+            rotate = pv.models.layers.LowRankRotateLayer(*shape, init_orth=True)  # type: ignore
         else:
-            shape = rotation_subspace.shape
-            rotate = pv.models.layers.LowRankRotateLayer(*shape, init_orth=False)
+            shape = rotation_subspace.shape  # type: ignore
+            rotate = pv.models.layers.LowRankRotateLayer(*shape, init_orth=False)  # type: ignore
             rotate.weight.data.copy_(rotation_subspace)
 
         rotate = torch.nn.utils.parametrizations.orthogonal(rotate)
@@ -418,7 +416,7 @@ class SubspaceFeaturizer(Featurizer):
         super().__init__(
             SubspaceFeaturizerModule(rotate),
             SubspaceInverseFeaturizerModule(rotate),
-            n_features=rotate.weight.shape[1],
+            n_features=rotate.weight.shape[1],  # type: ignore
             id=id,
         )
 
@@ -444,10 +442,9 @@ class SAEInverseFeaturizerModule(torch.nn.Module):
         self.sae = sae
 
     def forward(self, features, error):
-        return (
-            self.sae.decode(features.to(self.sae.dtype)).to(features.dtype)
-            + error.to(features.dtype)
-        )
+        return self.sae.decode(features.to(self.sae.dtype)).to(
+            features.dtype
+        ) + error.to(features.dtype)
 
 
 class SAEFeaturizer(Featurizer):

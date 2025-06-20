@@ -1,10 +1,10 @@
-from abc import ABC, abstractmethod
-from typing import Union, List, Dict, Any
-
-import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
 import gc
 import os
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List, Union
+
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 __all__ = ["Pipeline", "LMPipeline"]
 
@@ -12,18 +12,22 @@ __all__ = ["Pipeline", "LMPipeline"]
 # Helper utils
 # ---------------------------------------------------------------------------
 
+
 def _infer_device_and_dtype(requested_device=None, requested_dtype=None):
     """Return a sensible `(device, dtype)` pair when not fully specified."""
     if requested_device is None:
         requested_device = "cuda" if torch.cuda.is_available() else "cpu"
     if requested_dtype is None:
-        requested_dtype = torch.float16 if requested_device.startswith("cuda") else torch.float32
+        requested_dtype = (
+            torch.float16 if requested_device.startswith("cuda") else torch.float32
+        )
     return requested_device, requested_dtype
 
 
 # ---------------------------------------------------------------------------
 # Base pipeline – minimal signatures (no *args / **kwargs)
 # ---------------------------------------------------------------------------
+
 
 class Pipeline(ABC):
     """Abstract base pipeline.
@@ -32,6 +36,10 @@ class Pipeline(ABC):
     avoids variadic parameters so implementers have full freedom to define
     their own concrete signatures.
     """
+
+    model_or_name: str | Any
+    tokenizer: AutoTokenizer
+    model: AutoModelForCausalLM
 
     def __init__(self, model_or_name):
         self.model_or_name = model_or_name
@@ -74,6 +82,7 @@ class Pipeline(ABC):
 # Language‑model pipeline (typed; unchanged implementation)
 # ---------------------------------------------------------------------------
 
+
 class LMPipeline(Pipeline):
     """Pipeline for autoregressive HuggingFace causal‑LMs."""
 
@@ -105,21 +114,40 @@ class LMPipeline(Pipeline):
         )
 
         if isinstance(self.model_or_name, str):
-            hf_token = self._init_extra_kwargs.get("hf_token", None) or os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_or_name, token=hf_token)
-            self.model = AutoModelForCausalLM.from_pretrained(
-                self.model_or_name, config=self._init_extra_kwargs.get("config"), token=hf_token
-            ).to(device).to(dtype)
-            if hasattr(self.model.config, "_attn_implementation") and "qwen" not in self.model.config.name_or_path.lower():
-                self.model.config._attn_implementation = "eager"
-            if hasattr(self.model.config, "use_cache"):
-                self.model.config.use_cache = False
+            hf_token = (
+                self._init_extra_kwargs.get("hf_token", None)
+                or os.environ.get("HF_TOKEN")
+                or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+            )
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_or_name, token=hf_token
+            )
+            self.model = (
+                AutoModelForCausalLM.from_pretrained(
+                    self.model_or_name,
+                    config=self._init_extra_kwargs.get("config"),
+                    token=hf_token,
+                )
+                .to(device)
+                .to(dtype)
+            )
+            if (
+                hasattr(self.model.config, "_attn_implementation")  # type: ignore
+                and "qwen" not in self.model.config.name_or_path.lower()  # type: ignore
+            ):
+                self.model.config._attn_implementation = "eager"  # type: ignore
+            if hasattr(self.model.config, "use_cache"):  # type: ignore
+                self.model.config.use_cache = False  # type: ignore
         else:
             self.model = self.model_or_name.to(device).to(dtype)
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model.config.name_or_path)
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model.config.name_or_path  # type: ignore
+            )
 
-        self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.tokenizer.pad_token_id = self.tokenizer.convert_tokens_to_ids(self.tokenizer.pad_token)
+        self.tokenizer.pad_token = self.tokenizer.eos_token  # type: ignore
+        self.tokenizer.pad_token_id = self.tokenizer.convert_tokens_to_ids(  # type: ignore
+            self.tokenizer.pad_token  # type: ignore
+        )
 
     # ------------------------------------------------------------------
     # Encoding
@@ -133,29 +161,34 @@ class LMPipeline(Pipeline):
         padding_side: str | None = None,
         add_special_tokens: bool = True,
     ) -> Dict[str, torch.Tensor]:
-
         if isinstance(input, str):
             input = [{"raw_input": input}]
         elif isinstance(input, list) and len(input) > 0 and isinstance(input[0], str):
             input = [{"raw_input": p} for p in input]
 
         if isinstance(input, Dict):
-            assert "raw_input" in input, "Input dictionary must contain 'raw_input' key."
+            assert "raw_input" in input, (
+                "Input dictionary must contain 'raw_input' key."
+            )
             raw_input = [input["raw_input"]]
         else:
-            assert isinstance(input, list) or isinstance(input, tuple), "Input must be a dictionary or a list/tuple of dictionaries."
-            assert all("raw_input" in item for item in input), "Each input dictionary must contain 'raw_input' key."
-            raw_input = [item["raw_input"] for item in input]
+            assert isinstance(input, list) or isinstance(input, tuple), (
+                "Input must be a dictionary or a list/tuple of dictionaries."
+            )
+            assert all("raw_input" in item for item in input), (
+                "Each input dictionary must contain 'raw_input' key."
+            )
+            raw_input = [item["raw_input"] for item in input]  # type: ignore
 
         if max_length is None:
             max_length = self.max_length
 
         if padding_side is not None:
-            prev_padding_side = self.tokenizer.padding_side
-            self.tokenizer.padding_side = padding_side
+            prev_padding_side = self.tokenizer.padding_side  # type: ignore
+            self.tokenizer.padding_side = padding_side  # type: ignore
 
         enc = self.tokenizer(
-            raw_input,
+            raw_input,  # type: ignore
             padding="max_length" if max_length else True,
             max_length=max_length,
             truncation=max_length is not None,
@@ -163,15 +196,15 @@ class LMPipeline(Pipeline):
             add_special_tokens=add_special_tokens,
         )
         if self.position_ids:
-            enc["position_ids"] = self.model.prepare_inputs_for_generation(
+            enc["position_ids"] = self.model.prepare_inputs_for_generation(  # type: ignore
                 input_ids=enc["input_ids"], attention_mask=enc["attention_mask"]
             )["position_ids"]
         for k, v in enc.items():
             if isinstance(v, torch.Tensor):
-                enc[k] = v.to(self.model.device)
-        
+                enc[k] = v.to(self.model.device)  # type: ignore
+
         if padding_side is not None:
-            self.tokenizer.padding_side = prev_padding_side
+            self.tokenizer.padding_side = prev_padding_side  # type: ignore
         return enc
 
     # ------------------------------------------------------------------
@@ -185,13 +218,15 @@ class LMPipeline(Pipeline):
         is_logits: bool = True,
     ) -> Union[str, List[str]]:
         if isinstance(model_output, dict):
-            model_output = model_output.get("sequences", model_output.get("scores"))
+            model_output = model_output.get("sequences", model_output.get("scores"))  # type: ignore
             if isinstance(model_output, torch.Tensor):
                 is_logits = model_output.dim() >= 3
 
         if isinstance(model_output, (list, tuple)):
             model_output = (
-                model_output[0].unsqueeze(1) if len(model_output) == 1 else torch.stack(model_output, dim=1)
+                model_output[0].unsqueeze(1)
+                if len(model_output) == 1
+                else torch.stack(model_output, dim=1)
             )
 
         if isinstance(model_output, torch.Tensor):
@@ -206,19 +241,21 @@ class LMPipeline(Pipeline):
         else:
             raise TypeError("model_output must be Tensor / list / tuple / dict")
 
-        decoded = self.tokenizer.batch_decode(token_ids, skip_special_tokens=True)
+        decoded = self.tokenizer.batch_decode(token_ids, skip_special_tokens=True)  # type: ignore
         return decoded[0] if len(decoded) == 1 else decoded
 
     # ------------------------------------------------------------------
     # Generation
     # ------------------------------------------------------------------
 
-    def generate(self, input: Union[Dict, List[Dict], str, List[str]], **gen_kwargs: Any) -> Dict[str, Any]:
+    def generate(
+        self, input: Union[Dict, List[Dict], str, List[str]], **gen_kwargs: Any
+    ) -> Dict[str, Any]:
         # Handle backward compatibility for raw strings
         inputs = self.load(input)
         defaults: dict[str, Any] = dict(
             max_new_tokens=self.max_new_tokens,
-            pad_token_id=self.tokenizer.pad_token_id,
+            pad_token_id=self.tokenizer.pad_token_id,  # type: ignore
             return_dict_in_generate=True,
             output_scores=True,
             do_sample=False,
@@ -226,9 +263,9 @@ class LMPipeline(Pipeline):
         )
         defaults.update(gen_kwargs)
         with torch.no_grad():
-            out = self.model.generate(**inputs, **defaults)
-        scores = [s.detach().cpu() for s in (out.scores or [])]
-        seq = out.sequences[:, -self.max_new_tokens :].detach().cpu()
+            out = self.model.generate(**inputs, **defaults)  # type: ignore
+        scores = [s.detach().cpu() for s in (out.scores or [])]  # type: ignore
+        seq = out.sequences[:, -self.max_new_tokens :].detach().cpu()  # type: ignore
         del inputs, out
         torch.cuda.empty_cache()
         gc.collect()
@@ -253,7 +290,7 @@ class LMPipeline(Pipeline):
             unit_locations=map,
             subspaces=feature_indices,
             max_new_tokens=self.max_new_tokens,
-            pad_token_id=self.tokenizer.pad_token_id,
+            pad_token_id=self.tokenizer.pad_token_id,  # type: ignore
             return_dict_in_generate=True,
             output_scores=output_scores,
             intervene_on_prompt=True,
@@ -263,11 +300,15 @@ class LMPipeline(Pipeline):
         defaults.update(gen_kwargs)
         with torch.no_grad():
             out = intervenable_model.generate(base, sources=sources, **defaults)
-        return out[-1].scores if output_scores else out[-1].sequences[:, -self.max_new_tokens :]
+        return (
+            out[-1].scores
+            if output_scores
+            else out[-1].sequences[:, -self.max_new_tokens :]
+        )
 
     # ------------------------------------------------------------------
     # Convenience
     # ------------------------------------------------------------------
 
     def get_num_layers(self) -> int:
-        return int(self.model.config.num_hidden_layers)
+        return int(self.model.config.num_hidden_layers)  # type: ignore

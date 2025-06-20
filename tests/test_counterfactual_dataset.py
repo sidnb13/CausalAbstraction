@@ -2,7 +2,7 @@ import pytest
 import unittest.mock as mock
 
 from datasets import Dataset
-from causal.counterfactual_dataset import CounterfactualDataset
+from causal_abstraction.causal.counterfactual_dataset import CounterfactualDataset
 
 class TestCounterfactualDataset:
     """Tests for the CounterfactualDataset class."""

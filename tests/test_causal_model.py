@@ -4,9 +4,8 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 import unittest
 import random
-from collections import defaultdict
 
-from causal.causal_model import CausalModel
+from causal_abstraction.causal.causal_model import CausalModel
 
 
 class ArithmeticCausalModel:
