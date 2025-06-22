@@ -1,7 +1,7 @@
 """
 featurizers.py
 ==============
-Utility classes for defining *invertible* feature spaces on top of a model’s
+Utility classes for defining *invertible* feature spaces on top of a model's
 hidden-state tensors, together with intervention helpers that operate inside
 those spaces.
 
@@ -221,6 +221,117 @@ class Featurizer:
 
 
 # --------------------------------------------------------------------------- #
+#  Top-level Intervention Classes                                              #
+# --------------------------------------------------------------------------- #
+class FeatureInterchangeIntervention(
+    pv.TrainableIntervention, pv.DistributedRepresentationIntervention
+):
+    """Swap features between *base* and *source* in the featurized space."""
+
+    def __init__(self, featurizer, inverse_featurizer, featurizer_id, **kwargs):
+        super().__init__(**kwargs)
+        self._featurizer = featurizer
+        self._inverse = inverse_featurizer
+        self._featurizer_id = featurizer_id
+
+    def forward(self, base, source, subspaces=None):
+        f_base, base_err = self._featurizer(base)
+        f_src, _ = self._featurizer(source)
+        if subspaces is None or _subspace_is_all_none(subspaces):
+            f_out = f_src
+        else:
+            f_out = pv.models.intervention_utils._do_intervention_by_swap(  # type: ignore
+                f_base,
+                f_src,
+                "interchange",
+                self.interchange_dim,
+                subspaces,
+                subspace_partition=self.subspace_partition,
+                use_fast=self.use_fast,
+            )
+        return self._inverse(f_out, base_err).to(base.dtype)
+
+    def __str__(self):  # noqa: D401
+        return f"FeatureInterchangeIntervention(id={self._featurizer_id})"
+
+
+class FeatureCollectIntervention(pv.CollectIntervention):
+    def __init__(self, featurizer, featurizer_id, **kwargs):
+        super().__init__(**kwargs)
+        self._featurizer = featurizer
+        self._featurizer_id = featurizer_id
+
+    def forward(self, base, source=None, subspaces=None):
+        f_base, _ = self._featurizer(base)
+        return pv.models.intervention_utils._do_intervention_by_swap(  # type: ignore
+            f_base,
+            source,
+            "collect",
+            self.interchange_dim,
+            subspaces,
+            subspace_partition=self.subspace_partition,
+            use_fast=self.use_fast,
+        )
+
+    def __str__(self):  # noqa: D401
+        return f"FeatureCollectIntervention(id={self._featurizer_id})"
+
+
+class FeatureMaskIntervention(pv.TrainableIntervention):
+    """Differential-binary masking in the featurized space."""
+
+    def __init__(
+        self, featurizer, inverse_featurizer, n_features, featurizer_id, **kwargs
+    ):
+        super().__init__(**kwargs)
+        self._featurizer = featurizer
+        self._inverse = inverse_featurizer
+        self._featurizer_id = featurizer_id
+        # Learnable parameters
+        self.mask = torch.nn.Parameter(torch.zeros(n_features), requires_grad=True)
+        self.temperature: torch.Tensor | None = None  # must be set by user
+
+    # -------------------- API helpers -------------------- #
+    def get_temperature(self) -> torch.Tensor:
+        if self.temperature is None:
+            raise ValueError("Temperature has not been set.")
+        return self.temperature
+
+    def set_temperature(self, temp: float | torch.Tensor):
+        self.temperature = torch.as_tensor(temp, dtype=self.mask.dtype).to(
+            self.mask.device
+        )
+
+    # ------------------------- forward ------------------- #
+    def forward(self, base, source, subspaces=None):
+        if self.temperature is None:
+            raise ValueError("Cannot run forward without a temperature.")
+        f_base, base_err = self._featurizer(base)
+        f_src, _ = self._featurizer(source)
+        # Align devices / dtypes
+        mask = self.mask.to(f_base.device)
+        temp = self.temperature.to(f_base.device)
+        f_base = f_base.to(mask.dtype)
+        f_src = f_src.to(mask.dtype)
+        if self.training:
+            gate = torch.sigmoid(mask / temp)
+        else:
+            gate = (torch.sigmoid(mask) > 0.5).float()
+        f_out = (1.0 - gate) * f_base + gate * f_src
+        return self._inverse(f_out.to(base.dtype), base_err).to(base.dtype)
+
+    # ---------------- Sparsity regulariser --------------- #
+    def get_sparsity_loss(self) -> torch.Tensor:
+        if self.temperature is None:
+            raise ValueError("Temperature has not been set.")
+        gate = torch.sigmoid(self.mask / self.temperature)
+        return torch.norm(gate, p=1)
+
+    def __str__(self):  # noqa: D401
+        return f"FeatureMaskIntervention(id={self._featurizer_id})"
+
+
+# --------------------------------------------------------------------------- #
 #  Intervention factory helpers                                               #
 # --------------------------------------------------------------------------- #
 def build_feature_interchange_intervention(
@@ -228,66 +339,13 @@ def build_feature_interchange_intervention(
     inverse_featurizer: torch.nn.Module,
     featurizer_id: str,
 ):
-    """Return a class implementing PyVENE’s TrainableIntervention."""
-
-    class FeatureInterchangeIntervention(
-        pv.TrainableIntervention, pv.DistributedRepresentationIntervention
-    ):
-        """Swap features between *base* and *source* in the featurized space."""
-
-        def __init__(self, **kwargs):
-            super().__init__(**kwargs)
-            self._featurizer = featurizer
-            self._inverse = inverse_featurizer
-
-        def forward(self, base, source, subspaces=None):
-            f_base, base_err = self._featurizer(base)
-            f_src, _ = self._featurizer(source)
-
-            if subspaces is None or _subspace_is_all_none(subspaces):
-                f_out = f_src
-            else:
-                f_out = pv.models.intervention_utils._do_intervention_by_swap(  # type: ignore
-                    f_base,
-                    f_src,
-                    "interchange",
-                    self.interchange_dim,
-                    subspaces,
-                    subspace_partition=self.subspace_partition,
-                    use_fast=self.use_fast,
-                )
-            return self._inverse(f_out, base_err).to(base.dtype)
-
-        def __str__(self):  # noqa: D401
-            return f"FeatureInterchangeIntervention(id={featurizer_id})"
-
-    return FeatureInterchangeIntervention
+    """Return a class implementing PyVENE's TrainableIntervention."""
+    return FeatureInterchangeIntervention(featurizer, inverse_featurizer, featurizer_id)
 
 
 def build_feature_collect_intervention(featurizer: torch.nn.Module, featurizer_id: str):
     """Return a `CollectIntervention` operating in feature space."""
-
-    class FeatureCollectIntervention(pv.CollectIntervention):
-        def __init__(self, **kwargs):
-            super().__init__(**kwargs)
-            self._featurizer = featurizer
-
-        def forward(self, base, source=None, subspaces=None):
-            f_base, _ = self._featurizer(base)
-            return pv.models.intervention_utils._do_intervention_by_swap(  # type: ignore
-                f_base,
-                source,
-                "collect",
-                self.interchange_dim,
-                subspaces,
-                subspace_partition=self.subspace_partition,
-                use_fast=self.use_fast,
-            )
-
-        def __str__(self):  # noqa: D401
-            return f"FeatureCollectIntervention(id={featurizer_id})"
-
-    return FeatureCollectIntervention
+    return FeatureCollectIntervention(featurizer, featurizer_id)
 
 
 def build_feature_mask_intervention(
@@ -297,64 +355,9 @@ def build_feature_mask_intervention(
     featurizer_id: str,
 ):
     """Return a trainable mask intervention."""
-
-    class FeatureMaskIntervention(pv.TrainableIntervention):
-        """Differential-binary masking in the featurized space."""
-
-        def __init__(self, **kwargs):
-            super().__init__(**kwargs)
-            self._featurizer = featurizer
-            self._inverse = inverse_featurizer
-
-            # Learnable parameters
-            self.mask = torch.nn.Parameter(torch.zeros(n_features), requires_grad=True)
-            self.temperature: torch.Tensor | None = None  # must be set by user
-
-        # -------------------- API helpers -------------------- #
-        def get_temperature(self) -> torch.Tensor:
-            if self.temperature is None:
-                raise ValueError("Temperature has not been set.")
-            return self.temperature
-
-        def set_temperature(self, temp: float | torch.Tensor):
-            self.temperature = torch.as_tensor(temp, dtype=self.mask.dtype).to(
-                self.mask.device
-            )
-
-        # ------------------------- forward ------------------- #
-        def forward(self, base, source, subspaces=None):
-            if self.temperature is None:
-                raise ValueError("Cannot run forward without a temperature.")
-
-            f_base, base_err = self._featurizer(base)
-            f_src, _ = self._featurizer(source)
-
-            # Align devices / dtypes
-            mask = self.mask.to(f_base.device)
-            temp = self.temperature.to(f_base.device)
-
-            f_base = f_base.to(mask.dtype)
-            f_src = f_src.to(mask.dtype)
-
-            if self.training:
-                gate = torch.sigmoid(mask / temp)
-            else:
-                gate = (torch.sigmoid(mask) > 0.5).float()
-
-            f_out = (1.0 - gate) * f_base + gate * f_src
-            return self._inverse(f_out.to(base.dtype), base_err).to(base.dtype)
-
-        # ---------------- Sparsity regulariser --------------- #
-        def get_sparsity_loss(self) -> torch.Tensor:
-            if self.temperature is None:
-                raise ValueError("Temperature has not been set.")
-            gate = torch.sigmoid(self.mask / self.temperature)
-            return torch.norm(gate, p=1)
-
-        def __str__(self):  # noqa: D401
-            return f"FeatureMaskIntervention(id={featurizer_id})"
-
-    return FeatureMaskIntervention
+    return FeatureMaskIntervention(
+        featurizer, inverse_featurizer, n_features, featurizer_id
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -420,7 +423,7 @@ class SubspaceFeaturizer(Featurizer):
 
 
 class SAEFeaturizerModule(torch.nn.Module):
-    """Wrapper around a *Sparse Autoencoder*’s encode() / decode() pair."""
+    """Wrapper around a *Sparse Autoencoder*'s encode() / decode() pair."""
 
     def __init__(self, sae):
         super().__init__()

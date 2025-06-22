@@ -15,7 +15,7 @@ This file introduces:
   feature-subset).
 """
 
-from typing import List, Optional, Union
+from typing import List, Optional, Union  # noqa: UP035
 
 from causal_abstraction.neural.featurizers import Featurizer
 

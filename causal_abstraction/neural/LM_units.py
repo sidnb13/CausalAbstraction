@@ -11,8 +11,6 @@ All helpers inherit from :class:`model_units.AtomicModelUnit`, so they carry
 the full featurizer + feature indexing machinery.
 """
 
-from typing import List, Union
-
 from causal_abstraction.neural.featurizers import Featurizer
 from causal_abstraction.neural.model_units import (
     AtomicModelUnit,
@@ -79,7 +77,7 @@ class ResidualStream(AtomicModelUnit):
     def __init__(
         self,
         layer: int,
-        token_indices: Union[List[int], ComponentIndexer],
+        token_indices: list[int] | ComponentIndexer,
         *,
         featurizer: Featurizer | None = None,
         shape=None,
@@ -116,7 +114,7 @@ class AttentionHead(AtomicModelUnit):
         self,
         layer: int,
         head: int,
-        token_indices: Union[List[int], ComponentIndexer],
+        token_indices: list[int] | ComponentIndexer,
         *,
         featurizer: Featurizer | None = None,
         shape=None,

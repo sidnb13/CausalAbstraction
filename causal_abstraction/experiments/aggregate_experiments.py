@@ -1,6 +1,6 @@
 import gc
 import os
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable  # noqa: UP035
 
 import torch
 
@@ -14,20 +14,20 @@ from causal_abstraction.neural.pipeline import LMPipeline
 
 
 def residual_stream_baselines(
-    pipeline: Optional[LMPipeline] = None,
-    task: Optional[CausalModel] = None,
-    token_positions: Optional[List[int]] = None,
-    train_data: Optional[Dict[str, CounterfactualDataset]] = None,
-    test_data: Optional[Dict[str, CounterfactualDataset]] = None,
-    config: Optional[Dict[str, Any]] = None,
-    target_variables: Optional[List[str]] = None,
-    checker: Optional[Callable] = None,
-    start: Optional[int] = None,
-    end: Optional[int] = None,
+    pipeline: LMPipeline | None = None,
+    task: CausalModel | None = None,
+    token_positions: list[int] | None = None,
+    train_data: dict[str, CounterfactualDataset] | None = None,
+    test_data: dict[str, CounterfactualDataset] | None = None,
+    config: dict[str, Any] | None = None,
+    target_variables: list[str] | None = None,
+    checker: Callable | None = None,
+    start: int | None = None,
+    end: int | None = None,
     verbose: bool = False,
-    model_dir: Optional[str] = None,
-    results_dir: Optional[str] = None,
-    methods: List[str] = ["full_vector", "DAS", "DBM+SVD", "DBM+PCA", "DBM", "DBM+SAE"],
+    model_dir: str | None = None,
+    results_dir: str | None = None,
+    methods: list[str] = ["full_vector", "DAS", "DBM+SVD", "DBM+PCA", "DBM", "DBM+SAE"],
 ):
     """
     Run different residual stream intervention methods on language models.
@@ -402,19 +402,19 @@ def residual_stream_baselines(
 
 
 def attention_head_baselines(
-    pipeline: Optional[LMPipeline] = None,
-    task: Optional[CausalModel] = None,
-    token_positions: Optional[List[int]] = None,
-    train_data: Optional[Dict[str, CounterfactualDataset]] = None,
-    test_data: Optional[Dict[str, CounterfactualDataset]] = None,
-    config: Optional[Dict[str, Any]] = None,
-    target_variables: Optional[List[str]] = None,
-    checker: Optional[Callable] = None,
+    pipeline: LMPipeline | None = None,
+    task: CausalModel | None = None,
+    token_positions: list[int] | None = None,
+    train_data: dict[str, CounterfactualDataset] | None = None,
+    test_data: dict[str, CounterfactualDataset] | None = None,
+    config: dict[str, Any] | None = None,
+    target_variables: list[str] | None = None,
+    checker: Callable | None = None,
     verbose: bool = False,
-    model_dir: Optional[str] = None,
-    results_dir: Optional[str] = None,
-    heads_list: Optional[List[Tuple[int, int]]] = None,
-    skip: List[str] = [],
+    model_dir: str | None = None,
+    results_dir: str | None = None,
+    heads_list: list[tuple[int, int]] | None = None,
+    skip: list[str] = [],
 ):
     """
     Run different intervention methods on attention head outputs.

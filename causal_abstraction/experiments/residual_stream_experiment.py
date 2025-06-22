@@ -5,7 +5,8 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 import gc
 import logging
 import os
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
+from typing import Any, Dict, List, Optional, Tuple  # noqa: UP035
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -17,7 +18,7 @@ from causal_abstraction.experiments.intervention_experiment import (
     InterventionExperiment,
 )
 from causal_abstraction.experiments.pyvene_core import _prepare_intervenable_inputs
-from causal_abstraction.neural.featurizers import Featurizer
+from causal_abstraction.neural.featurizers import Featurizer, SAEFeaturizer
 from causal_abstraction.neural.LM_units import ResidualStream, TokenPosition
 from causal_abstraction.neural.pipeline import LMPipeline
 
@@ -259,7 +260,7 @@ class PatchResidualStream(InterventionExperiment):
             for pos in token_positions:
                 featurizer = self.featurizers.get(
                     (layer, pos.id),
-                    Featurizer(n_features=pipeline.model.config.hidden_size),
+                    Featurizer(n_features=pipeline.model.config.hidden_size),  # type: ignore
                 )
                 model_units_lists.append(
                     [
@@ -268,7 +269,7 @@ class PatchResidualStream(InterventionExperiment):
                                 layer=layer,
                                 token_indices=pos,
                                 featurizer=featurizer,
-                                shape=(pipeline.model.config.hidden_size,),
+                                shape=(pipeline.model.config.hidden_size,),  # type: ignore
                                 feature_indices=None,
                                 target_output=True,
                             )
@@ -320,7 +321,7 @@ class PatchResidualStream(InterventionExperiment):
         try:
             # Process each model units list
             for model_units_list in self.model_units_lists:
-                for model_units in model_units_list:
+                for model_units in model_units_list:  # type: ignore
                     for unit in model_units:
                         layer = unit.component.get_layer()
 
@@ -363,9 +364,9 @@ class PatchResidualStream(InterventionExperiment):
 
     def plot_heatmaps(
         self,
-        results: Dict,
-        target_variables,
-        save_path: str = None,
+        results: dict,
+        target_variables: list[str],
+        save_path: str | None = None,
         average_counterfactuals: bool = False,
     ):
         """
