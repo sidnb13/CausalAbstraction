@@ -53,20 +53,25 @@ def _delete_intervenable_model(intervenable_model):
     return
 
 
-def _prepare_intervenable_model(pipeline: Pipeline, model_units_list: List[List[AtomicModelUnit]], intervention_type: str = "interchange"):
+def _prepare_intervenable_model(
+    pipeline: Pipeline,
+    model_units_list: List[List[AtomicModelUnit]],
+    intervention_type: str = "interchange",
+    **kwargs,
+):
     """
     Prepare an intervenable model for specified model units and intervention type.
-    
+
     Creates a pyvene IntervenableModel configured for the specified intervention type
     and model units. Handles both static and dynamic index configurations. The intervention
     configs are linked across inner lists meaning those components share a counterfactual input.
-    
+
     Args:
         pipeline (Pipeline): The pipeline containing the base model
         model_unit_lists (List[List[AtomicModelUnit]]): A list of lists of model units to be intervened on.
             The inner lists contain model components that are intervened on together with one counterfactual input.
         intervention_type (str): The type of intervention to use ("interchange", "collect", or "mask")
-    
+
     Returns:
         intervenable_model: The prepared intervenable model on the pipeline's device
     """
@@ -80,17 +85,22 @@ def _prepare_intervenable_model(pipeline: Pipeline, model_units_list: List[List[
 
     # Create intervention configs for all model units
     configs = []
-    for i, model_units in enumerate(model_units_list): 
+    for i, model_units in enumerate(model_units_list):
         for model_unit in model_units:
-            config = model_unit.create_intervention_config(i, intervention_type)
+            config = model_unit.create_intervention_config(
+                i, intervention_type, **kwargs
+            )
             configs.append(config)
 
     # Create the intervenable model with the collected configs
     intervention_config = pv.IntervenableConfig(configs)
-    intervenable_model = pv.IntervenableModel(intervention_config, model=pipeline.model, use_fast=static)
+    intervenable_model = pv.IntervenableModel(
+        intervention_config, model=pipeline.model, use_fast=static
+    )
     intervenable_model.set_device(pipeline.model.device)
-    
+
     return intervenable_model
+
 
 def _prepare_intervenable_inputs(pipeline, batch, model_units_list):
     """
@@ -526,6 +536,7 @@ def _train_intervention(pipeline: Pipeline,
             - memory_cleanup_freq (int, optional): Batch frequency for memory cleanup
                                                (default: 50)
             - shuffle (bool, optional): Whether to shuffle data (default: True)
+            - intervenable_model_kwargs: Additional configuration parameters for the intervenable model
         loss_and_metric_fn (callable): Function computing loss and metrics for a batch
                                      with signature (pipeline, model, batch, units) ->
                                      (loss, metrics_dict, logging_info)
@@ -535,7 +546,7 @@ def _train_intervention(pipeline: Pipeline,
               For mask interventions, feature_indices are also set based on training.
     """
     # ----- Model Initialization ----- #
-    intervenable_model = _prepare_intervenable_model(pipeline, model_units_list, intervention_type=intervention_type)
+    intervenable_model = _prepare_intervenable_model(pipeline, model_units_list, intervention_type=intervention_type, **config["intervenable_model_kwargs"])
     intervenable_model.disable_model_gradients()
     intervenable_model.eval()
 
@@ -585,11 +596,17 @@ def _train_intervention(pipeline: Pipeline,
     
     # ----- Temperature Scheduling for Mask Interventions ----- #
     temperature_schedule = None
-    if (intervention_type == "mask"):
-        temperature_start, temperature_end = config['temperature_schedule']
-        temperature_schedule = torch.linspace(temperature_start, temperature_end,
-                                            num_epoch * len(dataloader) + 1)
-        temperature_schedule = temperature_schedule.to(pipeline.model.dtype).to(pipeline.model.device)
+    if (
+        intervention_type == "mask"
+        and config["enable_temperature_annealing"]
+    ):
+        temperature_start, temperature_end = config["temperature_schedule"]
+        temperature_schedule = torch.linspace(
+            temperature_start, temperature_end, num_epoch * len(dataloader) + 1
+        )
+        temperature_schedule = temperature_schedule.to(pipeline.model.dtype).to(
+            pipeline.model.device
+        )
         
         # Set initial temperature for all mask interventions
         for k, v in intervenable_model.interventions.items():
@@ -630,11 +647,11 @@ def _train_intervention(pipeline: Pipeline,
                     if isinstance(v, tuple):
                         loss = loss + regularization_coefficient * intervenable_model.interventions[k][0].get_sparsity_loss()
                         intervenable_model.interventions[k][0].set_temperature(
-                            temperature_schedule[scheduler._step_count])
+                            temperature_schedule[scheduler._step_count]) # type: ignore
                     else:
                         loss = loss + regularization_coefficient * intervenable_model.interventions[k].get_sparsity_loss()
                         intervenable_model.interventions[k].set_temperature(
-                            temperature_schedule[scheduler._step_count])
+                            temperature_schedule[scheduler._step_count]) # type: ignore
 
             # Update statistics
             aggregated_stats['loss'].append(loss.item())

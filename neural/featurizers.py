@@ -9,10 +9,10 @@ Key ideas
 ---------
 
 * **Featurizer** – a lightweight wrapper holding:
-    • a forward `featurizer` module that maps a tensor **x → (f, error)**  
+    • a forward `featurizer` module that maps a tensor **x → (f, error)**
       where *error* is the reconstruction residual (useful for lossy
-      featurizers such as sparse auto-encoders);  
-    • an `inverse_featurizer` that re-assembles the original space  
+      featurizers such as sparse auto-encoders);
+    • an `inverse_featurizer` that re-assembles the original space
       **(f, error) → x̂**.
 
 * **Interventions** – three higher-order factory functions build PyVENE
@@ -26,8 +26,9 @@ All public classes / functions below carry PEP-257-style doc-strings.
 
 from typing import Optional, Tuple
 
-import torch
 import pyvene as pv
+import torch
+from torch.nn import functional as F
 
 
 # --------------------------------------------------------------------------- #
@@ -98,7 +99,7 @@ class Featurizer:
             )
         return self._collect_intervention
 
-    def get_mask_intervention(self):
+    def get_mask_intervention(self, **kwargs):
         if self.n_features is None:
             raise ValueError(
                 "`n_features` must be provided on the Featurizer "
@@ -110,6 +111,7 @@ class Featurizer:
                 self.inverse_featurizer,
                 self.n_features,
                 self.id,
+                **kwargs,
             )
         return self._mask_intervention
 
@@ -135,7 +137,7 @@ class Featurizer:
         featurizer_class = self.featurizer.__class__.__name__
 
         if featurizer_class == "SAEFeaturizerModule":
-            #SAE featurizers are to be loaded from sae_lens
+            # SAE featurizers are to be loaded from sae_lens
             return None, None
 
         inverse_featurizer_class = self.inverse_featurizer.__class__.__name__
@@ -202,9 +204,9 @@ class Featurizer:
             inverse = SubspaceInverseFeaturizerModule(rotate_layer)
 
             # Sanity-check weight shape
-            assert (
-                featurizer.rotate.weight.shape == rot.shape
-            ), "Rotation-matrix shape mismatch after deserialisation."
+            assert featurizer.rotate.weight.shape == rot.shape, (
+                "Rotation-matrix shape mismatch after deserialisation."
+            )
         elif featurizer_class == "IdentityFeaturizerModule":
             featurizer = IdentityFeaturizerModule()
             inverse = IdentityInverseFeaturizerModule()
@@ -266,9 +268,7 @@ def build_feature_interchange_intervention(
     return FeatureInterchangeIntervention
 
 
-def build_feature_collect_intervention(
-    featurizer: torch.nn.Module, featurizer_id: str
-):
+def build_feature_collect_intervention(featurizer: torch.nn.Module, featurizer_id: str):
     """Return a `CollectIntervention` operating in feature space."""
 
     class FeatureCollectIntervention(pv.CollectIntervention):
@@ -294,71 +294,90 @@ def build_feature_collect_intervention(
     return FeatureCollectIntervention
 
 
+class FeatureMaskIntervention(pv.TrainableIntervention):
+    """Differential-binary masking in the featurized space."""
+
+    def __init__(
+        self,
+        featurizer: torch.nn.Module,
+        inverse_featurizer: torch.nn.Module,
+        n_features: int,
+        featurizer_id: str,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self._featurizer = featurizer
+        self._inverse = inverse_featurizer
+        self.featurizer_id = featurizer_id
+
+        self._mask = torch.nn.Parameter(torch.zeros(n_features), requires_grad=True)
+        self.register_buffer(
+            "_step", torch.tensor(0, dtype=torch.int32, requires_grad=False)
+        )
+        self._temperature = torch.nn.Parameter(
+            torch.tensor(
+                kwargs.get("start_temperature", 1.0),
+                requires_grad=kwargs.get("learnable_temperature", False),
+            )
+        )
+        self.straight_through = kwargs.get("straight_through", False)
+        self.inference_binarization = kwargs.get("inference_binarization", False)
+        self.eps = kwargs.get("eps", 1e-6)
+        self.threshold = kwargs.get("threshold", 0.5)
+        self.stochastic = kwargs.get("stochastic", False)
+
+    @property
+    def mask(self) -> torch.Tensor:
+        """Parameterized mask with optional discretization."""
+        if self.stochastic:
+            # draw uniform noise so that 0 < noise < 1 and log() is always defined
+            noise = torch.rand_like(self._mask).clamp(min=self.eps, max=1 - self.eps)
+            logistic_noise = torch.log(noise) - torch.log(1 - noise)
+            mask = F.sigmoid((self._mask + logistic_noise) / self._temperature)
+        else:
+            mask = F.sigmoid(self._mask / self._temperature)
+        return mask
+
+    def get_temperature(self) -> torch.Tensor:
+        return self._temperature
+
+    def set_temperature(self, temp: float):
+        self._temperature.fill_(temp)
+
+    def forward(self, base, source, subspaces=None):
+        f_base, base_err = self._featurizer(base)
+        f_src, _ = self._featurizer(source)
+
+        f_base = f_base.to(self._mask.dtype)
+        f_src = f_src.to(self._mask.dtype)
+
+        gate = self.mask
+        if self.straight_through:
+            gate = (gate > self.threshold).to(gate.dtype) + gate - gate.detach()
+        elif self.inference_binarization:
+            gate = (gate > self.threshold).to(gate.dtype)
+
+        f_out = (1.0 - gate) * f_base + gate * f_src
+        return self._inverse(f_out.to(base.dtype), base_err).to(base.dtype)
+
+    def get_sparsity_loss(self) -> torch.Tensor:
+        return torch.norm(self.mask, p=1)
+
+    def __str__(self):  # noqa: D401
+        return f"FeatureMaskIntervention(id={self.featurizer_id})"
+
+
 def build_feature_mask_intervention(
     featurizer: torch.nn.Module,
     inverse_featurizer: torch.nn.Module,
     n_features: int,
     featurizer_id: str,
+    **kwargs,
 ):
     """Return a trainable mask intervention."""
-
-    class FeatureMaskIntervention(pv.TrainableIntervention):
-        """Differential-binary masking in the featurized space."""
-
-        def __init__(self, **kwargs):
-            super().__init__(**kwargs)
-            self._featurizer = featurizer
-            self._inverse = inverse_featurizer
-
-            # Learnable parameters
-            self.mask = torch.nn.Parameter(torch.zeros(n_features), requires_grad=True)
-            self.temperature: Optional[torch.Tensor] = None  # must be set by user
-
-        # -------------------- API helpers -------------------- #
-        def get_temperature(self) -> torch.Tensor:
-            if self.temperature is None:
-                raise ValueError("Temperature has not been set.")
-            return self.temperature
-
-        def set_temperature(self, temp: float | torch.Tensor):
-            self.temperature = (
-                torch.as_tensor(temp, dtype=self.mask.dtype).to(self.mask.device)
-            )
-
-        # ------------------------- forward ------------------- #
-        def forward(self, base, source, subspaces=None):
-            if self.temperature is None:
-                raise ValueError("Cannot run forward without a temperature.")
-
-            f_base, base_err = self._featurizer(base)
-            f_src, _ = self._featurizer(source)
-
-            # Align devices / dtypes
-            mask = self.mask.to(f_base.device)
-            temp = self.temperature.to(f_base.device)
-
-            f_base = f_base.to(mask.dtype)
-            f_src = f_src.to(mask.dtype)
-
-            if self.training:
-                gate = torch.sigmoid(mask / temp)
-            else:
-                gate = (torch.sigmoid(mask) > 0.5).float()
-
-            f_out = (1.0 - gate) * f_base + gate * f_src
-            return self._inverse(f_out.to(base.dtype), base_err).to(base.dtype)
-
-        # ---------------- Sparsity regulariser --------------- #
-        def get_sparsity_loss(self) -> torch.Tensor:
-            if self.temperature is None:
-                raise ValueError("Temperature has not been set.")
-            gate = torch.sigmoid(self.mask / self.temperature)
-            return torch.norm(gate, p=1)
-
-        def __str__(self):  # noqa: D401
-            return f"FeatureMaskIntervention(id={featurizer_id})"
-
-    return FeatureMaskIntervention
+    return FeatureMaskIntervention(
+        featurizer, inverse_featurizer, n_features, featurizer_id, **kwargs
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -401,9 +420,9 @@ class SubspaceFeaturizer(Featurizer):
         trainable: bool = True,
         id: str = "subspace",
     ):
-        assert (
-            shape is not None or rotation_subspace is not None
-        ), "Provide either `shape` or `rotation_subspace`."
+        assert shape is not None or rotation_subspace is not None, (
+            "Provide either `shape` or `rotation_subspace`."
+        )
 
         if shape is not None:
             rotate = pv.models.layers.LowRankRotateLayer(*shape, init_orth=True)
@@ -444,10 +463,9 @@ class SAEInverseFeaturizerModule(torch.nn.Module):
         self.sae = sae
 
     def forward(self, features, error):
-        return (
-            self.sae.decode(features.to(self.sae.dtype)).to(features.dtype)
-            + error.to(features.dtype)
-        )
+        return self.sae.decode(features.to(self.sae.dtype)).to(
+            features.dtype
+        ) + error.to(features.dtype)
 
 
 class SAEFeaturizer(Featurizer):
