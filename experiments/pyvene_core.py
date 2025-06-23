@@ -596,10 +596,7 @@ def _train_intervention(pipeline: Pipeline,
     
     # ----- Temperature Scheduling for Mask Interventions ----- #
     temperature_schedule = None
-    if (
-        intervention_type == "mask"
-        and config["enable_temperature_annealing"]
-    ):
+    if intervention_type == "mask":
         temperature_start, temperature_end = config["temperature_schedule"]
         temperature_schedule = torch.linspace(
             temperature_start, temperature_end, num_epoch * len(dataloader) + 1

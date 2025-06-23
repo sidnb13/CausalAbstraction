@@ -1,7 +1,7 @@
 """
 featurizers.py
 ==============
-Utility classes for defining *invertible* feature spaces on top of a model’s
+Utility classes for defining *invertible* feature spaces on top of a model's
 hidden-state tensors, together with intervention helpers that operate inside
 those spaces.
 
@@ -232,7 +232,7 @@ def build_feature_interchange_intervention(
     inverse_featurizer: torch.nn.Module,
     featurizer_id: str,
 ):
-    """Return a class implementing PyVENE’s TrainableIntervention."""
+    """Return a class implementing PyVENE's TrainableIntervention."""
 
     class FeatureInterchangeIntervention(
         pv.TrainableIntervention, pv.DistributedRepresentationIntervention
@@ -317,8 +317,9 @@ class FeatureMaskIntervention(pv.TrainableIntervention):
         self._temperature = torch.nn.Parameter(
             torch.tensor(
                 kwargs.get("start_temperature", 1.0),
-                requires_grad=kwargs.get("learnable_temperature", False),
-            )
+                dtype=torch.float32,
+            ),
+            requires_grad=kwargs.get("learnable_temperature", False),
         )
         self.straight_through = kwargs.get("straight_through", False)
         self.inference_binarization = kwargs.get("inference_binarization", False)
@@ -342,7 +343,7 @@ class FeatureMaskIntervention(pv.TrainableIntervention):
         return self._temperature
 
     def set_temperature(self, temp: float):
-        self._temperature.fill_(temp)
+        self._temperature.data.fill_(temp)
 
     def forward(self, base, source, subspaces=None):
         f_base, base_err = self._featurizer(base)
@@ -374,10 +375,13 @@ def build_feature_mask_intervention(
     featurizer_id: str,
     **kwargs,
 ):
-    """Return a trainable mask intervention."""
-    return FeatureMaskIntervention(
-        featurizer, inverse_featurizer, n_features, featurizer_id, **kwargs
-    )
+    """Return a trainable mask intervention FACTORY (class, not instance)."""
+    # Closure over the featurizer args
+    class FeatureMaskInterventionFactory(FeatureMaskIntervention):
+        def __init__(self, **metadata):
+            # Ignore metadata, use closure values
+            super().__init__(featurizer, inverse_featurizer, n_features, featurizer_id, **kwargs)
+    return FeatureMaskInterventionFactory
 
 
 # --------------------------------------------------------------------------- #
@@ -443,7 +447,7 @@ class SubspaceFeaturizer(Featurizer):
 
 
 class SAEFeaturizerModule(torch.nn.Module):
-    """Wrapper around a *Sparse Autoencoder*’s encode() / decode() pair."""
+    """Wrapper around a *Sparse Autoencoder*'s encode() / decode() pair."""
 
     def __init__(self, sae):
         super().__init__()

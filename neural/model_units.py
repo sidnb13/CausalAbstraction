@@ -172,7 +172,7 @@ class AtomicModelUnit:
         featurizer :
             A `Featurizer` (defaults to identity featurizer).
         feature_indices :
-            Optional subset of indices inside the featurizer’s feature vector.
+            Optional subset of indices inside the featurizer's feature vector.
             Will be bounds-checked against `featurizer.n_features`.
         shape :
             Reserved for downstream sub-space creation helpers.
