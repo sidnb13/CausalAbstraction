@@ -9,10 +9,10 @@ Key ideas
 ---------
 
 * **Featurizer** – a lightweight wrapper holding:
-    • a forward `featurizer` module that maps a tensor **x → (f, error)**  
+    • a forward `featurizer` module that maps a tensor **x → (f, error)**
       where *error* is the reconstruction residual (useful for lossy
-      featurizers such as sparse auto-encoders);  
-    • an `inverse_featurizer` that re-assembles the original space  
+      featurizers such as sparse auto-encoders);
+    • an `inverse_featurizer` that re-assembles the original space
       **(f, error) → x̂**.
 
 * **Interventions** – three higher-order factory functions build PyVENE
@@ -26,8 +26,8 @@ All public classes / functions below carry PEP-257-style doc-strings.
 
 from typing import Optional, Tuple
 
-import torch
 import pyvene as pv
+import torch
 
 
 # --------------------------------------------------------------------------- #
@@ -105,7 +105,7 @@ class Featurizer:
                 "to construct a mask intervention."
             )
         if not hasattr(self, "_mask_intervention"):
-            self._mask_intervention = build_feature_mask_intervention(
+            self._mask_intervention = build_feature_mask_intervention_old(
                 self.featurizer,
                 self.inverse_featurizer,
                 self.n_features,
@@ -135,7 +135,7 @@ class Featurizer:
         featurizer_class = self.featurizer.__class__.__name__
 
         if featurizer_class == "SAEFeaturizerModule":
-            #SAE featurizers are to be loaded from sae_lens
+            # SAE featurizers are to be loaded from sae_lens
             return None, None
 
         inverse_featurizer_class = self.inverse_featurizer.__class__.__name__
@@ -202,9 +202,9 @@ class Featurizer:
             inverse = SubspaceInverseFeaturizerModule(rotate_layer)
 
             # Sanity-check weight shape
-            assert (
-                featurizer.rotate.weight.shape == rot.shape
-            ), "Rotation-matrix shape mismatch after deserialisation."
+            assert featurizer.rotate.weight.shape == rot.shape, (
+                "Rotation-matrix shape mismatch after deserialisation."
+            )
         elif featurizer_class == "IdentityFeaturizerModule":
             featurizer = IdentityFeaturizerModule()
             inverse = IdentityInverseFeaturizerModule()
@@ -266,9 +266,7 @@ def build_feature_interchange_intervention(
     return FeatureInterchangeIntervention
 
 
-def build_feature_collect_intervention(
-    featurizer: torch.nn.Module, featurizer_id: str
-):
+def build_feature_collect_intervention(featurizer: torch.nn.Module, featurizer_id: str):
     """Return a `CollectIntervention` operating in feature space."""
 
     class FeatureCollectIntervention(pv.CollectIntervention):
@@ -292,6 +290,73 @@ def build_feature_collect_intervention(
             return f"FeatureCollectIntervention(id={featurizer_id})"
 
     return FeatureCollectIntervention
+
+
+def build_feature_mask_intervention_old(
+    featurizer: torch.nn.Module,
+    inverse_featurizer: torch.nn.Module,
+    n_features: int,
+    featurizer_id: str,
+):
+    """Return a trainable mask intervention."""
+
+    class FeatureMaskIntervention(pv.TrainableIntervention):
+        """Differential-binary masking in the featurized space."""
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self._featurizer = featurizer
+            self._inverse = inverse_featurizer
+
+            # Learnable parameters
+            self.mask = torch.nn.Parameter(torch.zeros(n_features), requires_grad=True)
+            self.temperature: Optional[torch.Tensor] = None  # must be set by user
+
+        # -------------------- API helpers -------------------- #
+        def get_temperature(self) -> torch.Tensor:
+            if self.temperature is None:
+                raise ValueError("Temperature has not been set.")
+            return self.temperature
+
+        def set_temperature(self, temp: float | torch.Tensor):
+            self.temperature = torch.as_tensor(temp, dtype=self.mask.dtype).to(
+                self.mask.device
+            )
+
+        # ------------------------- forward ------------------- #
+        def forward(self, base, source, subspaces=None):
+            if self.temperature is None:
+                raise ValueError("Cannot run forward without a temperature.")
+
+            f_base, base_err = self._featurizer(base)
+            f_src, _ = self._featurizer(source)
+
+            # Align devices / dtypes
+            mask = self.mask.to(f_base.device)
+            temp = self.temperature.to(f_base.device)
+
+            f_base = f_base.to(mask.dtype)
+            f_src = f_src.to(mask.dtype)
+
+            if self.training:
+                gate = torch.sigmoid(mask / temp)
+            else:
+                gate = (torch.sigmoid(mask) > 0.5).float()
+
+            f_out = (1.0 - gate) * f_base + gate * f_src
+            return self._inverse(f_out.to(base.dtype), base_err).to(base.dtype)
+
+        # ---------------- Sparsity regulariser --------------- #
+        def get_sparsity_loss(self) -> torch.Tensor:
+            if self.temperature is None:
+                raise ValueError("Temperature has not been set.")
+            gate = torch.sigmoid(self.mask / self.temperature)
+            return torch.norm(gate, p=1)
+
+        def __str__(self):  # noqa: D401
+            return f"FeatureMaskIntervention(id={featurizer_id})"
+
+    return FeatureMaskIntervention
 
 
 def build_feature_mask_intervention(
@@ -321,8 +386,8 @@ def build_feature_mask_intervention(
             return self.temperature
 
         def set_temperature(self, temp: float | torch.Tensor):
-            self.temperature = (
-                torch.as_tensor(temp, dtype=self.mask.dtype).to(self.mask.device)
+            self.temperature = torch.as_tensor(temp, dtype=self.mask.dtype).to(
+                self.mask.device
             )
 
         # ------------------------- forward ------------------- #
@@ -401,9 +466,9 @@ class SubspaceFeaturizer(Featurizer):
         trainable: bool = True,
         id: str = "subspace",
     ):
-        assert (
-            shape is not None or rotation_subspace is not None
-        ), "Provide either `shape` or `rotation_subspace`."
+        assert shape is not None or rotation_subspace is not None, (
+            "Provide either `shape` or `rotation_subspace`."
+        )
 
         if shape is not None:
             rotate = pv.models.layers.LowRankRotateLayer(*shape, init_orth=True)
@@ -444,10 +509,9 @@ class SAEInverseFeaturizerModule(torch.nn.Module):
         self.sae = sae
 
     def forward(self, features, error):
-        return (
-            self.sae.decode(features.to(self.sae.dtype)).to(features.dtype)
-            + error.to(features.dtype)
-        )
+        return self.sae.decode(features.to(self.sae.dtype)).to(
+            features.dtype
+        ) + error.to(features.dtype)
 
 
 class SAEFeaturizer(Featurizer):
