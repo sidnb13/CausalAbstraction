@@ -223,7 +223,7 @@ class AtomicModelUnit:
     def is_static(self):
         return isinstance(self.component, StaticComponent)
 
-    def create_intervention_config(self, group_key, intervention_type):
+    def create_intervention_config(self, group_key, intervention_type, mask_kwargs=None):
         """Return PyVENE config dict for this unit + featurizer."""
         config = {
             "component": self.component.component_type,
@@ -235,8 +235,14 @@ class AtomicModelUnit:
             config["intervention_type"] = self.featurizer.get_interchange_intervention()
         elif intervention_type == "collect":
             config["intervention_type"] = self.featurizer.get_collect_intervention()
-        elif intervention_type == "mask":
-            config["intervention_type"] = self.featurizer.get_mask_intervention()
+        elif intervention_type == "mask_old":
+            config["intervention_type"] = self.featurizer.get_mask_intervention_old()
+        elif intervention_type == "mask_new":
+            # Pass mask intervention parameters if provided
+            if mask_kwargs is not None:
+                config["intervention_type"] = self.featurizer.get_mask_intervention(**mask_kwargs)
+            else:
+                config["intervention_type"] = self.featurizer.get_mask_intervention()
         else:
             raise ValueError(f"Unknown intervention type '{intervention_type}'.")
 

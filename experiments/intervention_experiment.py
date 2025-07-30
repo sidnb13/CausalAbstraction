@@ -423,13 +423,15 @@ class InterventionExperiment:
                 self.config[key] = value 
 
         # Validate method
-        assert method in ["DAS", "DBM"]
+        assert method in ["DAS", "DBM", "DBM_OLD"]
 
         # Set intervention type based on method
         if method == "DAS":
             intervention_type = "interchange"
         elif method == "DBM":
-            intervention_type = "mask"
+            intervention_type = "mask_new"
+        elif method == "DBM_OLD":
+            intervention_type = "mask_old"
 
         # Configure and train featurizers for each model unit
         for model_units_list in self.model_units_lists:
@@ -442,6 +444,15 @@ class InterventionExperiment:
                                 shape=(model_unit.shape[0], self.config["n_features"]), 
                                 trainable=True,
                                 id="DAS"
+                            )
+                        )
+                        model_unit.set_feature_indices(None)  # Use all features
+                    elif method == "DBM":
+                        # For DBM, use identity featurizer (mask intervention operates in original space)
+                        model_unit.set_featurizer(
+                            Featurizer(
+                                n_features=model_unit.shape[0],
+                                id="DBM"
                             )
                         )
                         model_unit.set_feature_indices(None)  # Use all features

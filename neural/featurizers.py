@@ -19,7 +19,9 @@ Key ideas
   interventions that work in the featurized space:
     - *interchange*
     - *collect*
-    - *mask* (differential binary masking)
+    - *mask* (differential binary masking with SelectionHead capabilities including
+      temperature annealing, Gumbel noise, straight-through gradients, and learnable
+      projection layers)
 
 All public classes / functions below carry PEP-257-style doc-strings.
 """
@@ -98,20 +100,55 @@ class Featurizer:
             )
         return self._collect_intervention
 
-    def get_mask_intervention(self):
+    def get_mask_intervention(
+        self,
+        use_ln: bool = True,
+        start_temperature: float = 1.0,
+        end_temperature: float = 0.1,
+        learnable_temperature: bool = False,
+        add_gumbel_noise: bool = False,
+        threshold: float = 0.5,
+        straight_through: bool = True,
+        hard_mask: bool = False,
+        eps: float = 1e-6,
+    ):
         if self.n_features is None:
             raise ValueError(
                 "`n_features` must be provided on the Featurizer "
                 "to construct a mask intervention."
             )
         if not hasattr(self, "_mask_intervention"):
-            self._mask_intervention = build_feature_mask_intervention_old(
+            self._mask_intervention = build_feature_mask_intervention_new(
+                self.featurizer,
+                self.inverse_featurizer,
+                self.n_features,
+                self.id,
+                use_ln=use_ln,
+                start_temperature=start_temperature,
+                end_temperature=end_temperature,
+                learnable_temperature=learnable_temperature,
+                add_gumbel_noise=add_gumbel_noise,
+                threshold=threshold,
+                straight_through=straight_through,
+                hard_mask=hard_mask,
+                eps=eps,
+            )
+        return self._mask_intervention
+
+    def get_mask_intervention_old(self):
+        if self.n_features is None:
+            raise ValueError(
+                "`n_features` must be provided on the Featurizer "
+                "to construct a mask intervention."
+            )
+        if not hasattr(self, "_mask_intervention_old"):
+            self._mask_intervention_old = build_feature_mask_intervention_old(
                 self.featurizer,
                 self.inverse_featurizer,
                 self.n_features,
                 self.id,
             )
-        return self._mask_intervention
+        return self._mask_intervention_old
 
     # ------------------------- Convenience I/O --------------------------- #
     def featurize(self, x: torch.Tensor):
@@ -323,6 +360,14 @@ def build_feature_mask_intervention_old(
                 self.mask.device
             )
 
+        def parameterize(self):
+            temp = self.temperature.to(self.mask.device)
+
+            if self.training:
+                return torch.sigmoid(self.mask / temp)
+            else:
+                return (torch.sigmoid(self.mask / temp) > 0.5).float()
+
         # ------------------------- forward ------------------- #
         def forward(self, base, source, subspaces=None):
             if self.temperature is None:
@@ -333,15 +378,11 @@ def build_feature_mask_intervention_old(
 
             # Align devices / dtypes
             mask = self.mask.to(f_base.device)
-            temp = self.temperature.to(f_base.device)
 
             f_base = f_base.to(mask.dtype)
             f_src = f_src.to(mask.dtype)
 
-            if self.training:
-                gate = torch.sigmoid(mask / temp)
-            else:
-                gate = (torch.sigmoid(mask) > 0.5).float()
+            gate = self.parameterize()
 
             f_out = (1.0 - gate) * f_base + gate * f_src
             return self._inverse(f_out.to(base.dtype), base_err).to(base.dtype)
@@ -359,69 +400,121 @@ def build_feature_mask_intervention_old(
     return FeatureMaskIntervention
 
 
-def build_feature_mask_intervention(
+def build_feature_mask_intervention_new(
     featurizer: torch.nn.Module,
     inverse_featurizer: torch.nn.Module,
     n_features: int,
     featurizer_id: str,
+    use_ln: bool = True,
+    start_temperature: float = 1.0,
+    end_temperature: float = 0.1,
+    learnable_temperature: bool = False,
+    add_gumbel_noise: bool = False,
+    threshold: float = 0.5,
+    straight_through: bool = True,
+    hard_mask: bool = False,
+    eps: float = 1e-6,
 ):
-    """Return a trainable mask intervention."""
+    """Return a trainable mask intervention with SelectionHead functionality."""
 
     class FeatureMaskIntervention(pv.TrainableIntervention):
-        """Differential-binary masking in the featurized space."""
+        """Differential-binary masking in the featurized space with SelectionHead capabilities."""
 
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self._featurizer = featurizer
             self._inverse = inverse_featurizer
+            self.start_temperature = start_temperature
+            self.end_temperature = end_temperature
+            self.learnable_temperature = learnable_temperature
+            self.add_gumbel_noise = add_gumbel_noise
+            self.hard_mask = hard_mask
 
-            # Learnable parameters
             self.mask = torch.nn.Parameter(torch.zeros(n_features), requires_grad=True)
-            self.temperature: Optional[torch.Tensor] = None  # must be set by user
+            self.register_buffer(
+                "_step", torch.tensor(0, dtype=torch.int32, requires_grad=False)
+            )
+            self._temperature = torch.nn.Parameter(
+                torch.tensor(
+                    start_temperature, requires_grad=self.learnable_temperature
+                )
+            )
+            self.threshold = threshold
+            self.straight_through = straight_through
+
+            # Cache for sparsity loss computation
+            self._cached_gate = None
 
         # -------------------- API helpers -------------------- #
         def get_temperature(self) -> torch.Tensor:
-            if self.temperature is None:
-                raise ValueError("Temperature has not been set.")
-            return self.temperature
+            return self._temperature
 
         def set_temperature(self, temp: float | torch.Tensor):
-            self.temperature = torch.as_tensor(temp, dtype=self.mask.dtype).to(
-                self.mask.device
+            """Legacy method for backward compatibility."""
+            self._temperature.data.copy_(
+                torch.as_tensor(temp, dtype=self._temperature.dtype)
             )
+
+        @torch.no_grad()
+        def step_temperature(self, total_steps: int):
+            """
+            Linearly anneals the temperature from start_temperature to end_temperature over total_steps.
+            Should be called at each training step.
+            """
+            self._step.add_(1)
+            step = min(self._step.item(), total_steps)
+            new_temp = self.start_temperature + (
+                self.end_temperature - self.start_temperature
+            ) * (step / total_steps)
+            self._temperature.fill_(new_temp)
+
+        def parameterize(self):
+            _temperature = self._temperature.clip(
+                min=self.end_temperature - eps, max=self.start_temperature + eps
+            )
+
+            if not self.learnable_temperature:
+                _temperature = _temperature.detach()
+
+            if self.add_gumbel_noise:
+                # draw uniform noise so that 0 < noise < 1 and log() is always defined
+                noise = torch.rand_like(self.mask).clamp(min=eps, max=1 - eps)
+                logistic_noise = torch.log(noise) - torch.log(1 - noise)
+                gate = torch.sigmoid((self.mask + logistic_noise) / _temperature)
+            else:
+                gate = torch.sigmoid(self.mask / _temperature)
+
+            # Cache gate probabilities for sparsity loss (before hard thresholding)
+            self._cached_gate = gate.detach()
+
+            if self.straight_through:
+                gate = (gate > self.threshold).to(gate.dtype) + gate - gate.detach()
+            elif self.hard_mask:
+                gate = (gate > self.threshold).to(gate.dtype)
+            return gate
 
         # ------------------------- forward ------------------- #
         def forward(self, base, source, subspaces=None):
-            if self.temperature is None:
-                raise ValueError("Cannot run forward without a temperature.")
-
             f_base, base_err = self._featurizer(base)
             f_src, _ = self._featurizer(source)
 
-            # Align devices / dtypes
-            mask = self.mask.to(f_base.device)
-            temp = self.temperature.to(f_base.device)
+            gate = self.parameterize()
 
-            f_base = f_base.to(mask.dtype)
-            f_src = f_src.to(mask.dtype)
-
-            if self.training:
-                gate = torch.sigmoid(mask / temp)
-            else:
-                gate = (torch.sigmoid(mask) > 0.5).float()
-
+            # Interpolate between base and source features
             f_out = (1.0 - gate) * f_base + gate * f_src
             return self._inverse(f_out.to(base.dtype), base_err).to(base.dtype)
 
         # ---------------- Sparsity regulariser --------------- #
         def get_sparsity_loss(self) -> torch.Tensor:
-            if self.temperature is None:
-                raise ValueError("Temperature has not been set.")
-            gate = torch.sigmoid(self.mask / self.temperature)
-            return torch.norm(gate, p=1)
+            """Compute sparsity loss based on cached gate probabilities from last forward pass."""
+            if self._cached_gate is None:
+                raise ValueError(
+                    "No cached gate probabilities found. Run forward() first."
+                )
+            return torch.norm(self._cached_gate, p=1)
 
         def __str__(self):  # noqa: D401
-            return f"FeatureMaskIntervention(id={featurizer_id})"
+            return f"FeatureMaskIntervention(id={featurizer_id}, selection_head=True)"
 
     return FeatureMaskIntervention
 
