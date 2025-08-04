@@ -18,7 +18,7 @@ def residual_stream_baselines(
     verbose=False,
     model_dir=None,
     results_dir=None,
-    methods=["full_vector", "DAS", "DBM+SVD", "DBM+PCA", "DBM", "DBM+SAE"]
+    methods=["full_vector", "DAS", "DBM+SVD", "DBM+PCA", "DBM_OLD", "DBM_NEW", "DBM+SAE"]
     ):
     """
     Run different residual stream intervention methods on language models.
@@ -52,7 +52,7 @@ def residual_stream_baselines(
     results_dir : str
         Directory to save results
     methods : list
-        List of methods to run (options: "full_vector", "DAS", "DBM+SVD", "DBM+PCA", "DBM", "DBM+SAE")
+        List of methods to run (options: "full_vector", "DAS", "DBM+SVD", "DBM+PCA", "DBM_OLD", "DBM_NEW", "DBM+SAE")
     """
     def heatmaps(experiment, results, config):
         """Generate and save heatmaps for experiment results."""
@@ -95,7 +95,7 @@ def residual_stream_baselines(
             
         config["method_name"] = "full_vector"
         experiment = PatchResidualStream(pipeline, task, list(range(start, end)), token_positions, checker, config=config)
-        method_model_dir = os.path.join(model_dir, f"full_vector_{pipeline.model.__class__.__name__}_{"-".join(target_variables)}")
+        method_model_dir = os.path.join(model_dir, f"full_vector_{pipeline.model.__class__.__name__}_{'-'.join(target_variables)}")
         experiment.save_featurizers(None, method_model_dir)
         raw_results = experiment.perform_interventions(test_data, verbose=verbose, target_variables_list=[target_variables], save_dir=results_dir)
         heatmaps(experiment, raw_results, config)
@@ -111,7 +111,7 @@ def residual_stream_baselines(
             
         config["method_name"] = "DAS"
         experiment = PatchResidualStream(pipeline, task, list(range(start, end)), token_positions, checker, config=config)
-        method_model_dir = os.path.join(model_dir, f"DAS_{pipeline.model.__class__.__name__}_{"-".join(target_variables)}")
+        method_model_dir = os.path.join(model_dir, f"DAS_{pipeline.model.__class__.__name__}_{'-'.join(target_variables)}")
         experiment.train_interventions(train_data, target_variables, method="DAS", verbose=verbose, model_dir=method_model_dir)
         raw_results = experiment.perform_interventions(test_data, verbose=verbose, target_variables_list=[target_variables], save_dir=results_dir)
         heatmaps(experiment, raw_results, config)
@@ -128,7 +128,7 @@ def residual_stream_baselines(
         config["method_name"] = "DBM+SVD"
         experiment = PatchResidualStream(pipeline, task, list(range(start, end)), token_positions, checker, config=config)
         experiment.build_SVD_feature_interventions(train_data, verbose=verbose)  # No PCA=True here
-        method_model_dir = os.path.join(model_dir, f"DBM+SVD_{pipeline.model.__class__.__name__}_{"-".join(target_variables)}")
+        method_model_dir = os.path.join(model_dir, f"DBM+SVD_{pipeline.model.__class__.__name__}_{'-'.join(target_variables)}")
         experiment.train_interventions(train_data, target_variables, method="DBM", verbose=verbose, model_dir=method_model_dir)
         raw_results = experiment.perform_interventions(test_data, verbose=verbose, target_variables_list=[target_variables], save_dir=results_dir)
         heatmaps(experiment, raw_results, config)
@@ -145,7 +145,7 @@ def residual_stream_baselines(
         config["method_name"] = "DBM+PCA"
         experiment = PatchResidualStream(pipeline, task, list(range(start, end)), token_positions, checker, config=config)
         experiment.build_SVD_feature_interventions(train_data, verbose=verbose, PCA=True)  # With PCA=True
-        method_model_dir = os.path.join(model_dir, f"DBM+PCA_{pipeline.model.__class__.__name__}_{"-".join(target_variables)}")
+        method_model_dir = os.path.join(model_dir, f"DBM+PCA_{pipeline.model.__class__.__name__}_{'-'.join(target_variables)}")
         experiment.train_interventions(train_data, target_variables, method="DBM", verbose=verbose, model_dir=method_model_dir)
         raw_results = experiment.perform_interventions(test_data, verbose=verbose, target_variables_list=[target_variables], save_dir=results_dir)
         heatmaps(experiment, raw_results, config)
@@ -155,16 +155,67 @@ def residual_stream_baselines(
         clear_memory()
 
     # Run standard DBM method
-    if "DBM" in methods:
+    if "DBM_OLD" in methods:
         if verbose:
             print("Running DBM method...")
             
-        config["method_name"] = "DBM"
+        config["method_name"] = "DBM_OLD"
         experiment = PatchResidualStream(pipeline, task, list(range(start, end)), token_positions, checker, config=config)
-        method_model_dir = os.path.join(model_dir, f"DBM_{pipeline.model.__class__.__name__}_{"-".join(target_variables)}")
-        experiment.train_interventions(train_data, target_variables, method="DBM", verbose=verbose, model_dir=method_model_dir)
+        method_model_dir = os.path.join(model_dir, f"DBM_OLD_{pipeline.model.__class__.__name__}_{'-'.join(target_variables)}")
+        experiment.train_interventions(train_data, target_variables, method="DBM_OLD", verbose=verbose, model_dir=method_model_dir)
         raw_results = experiment.perform_interventions(test_data, verbose=verbose, target_variables_list=[target_variables], save_dir=results_dir)
         heatmaps(experiment, raw_results, config)
+        
+        # Release memory before next experiment
+        del experiment, raw_results
+        clear_memory()
+
+    # Run DBM_NEW method (new mask intervention with SelectionHead capabilities)
+    if "DBM_NEW" in methods:
+        if verbose:
+            print("Running DBM_NEW method...")
+            
+        # Set default configuration for DBM_NEW based on MCQA tutorial
+        dbm_new_config = config.copy() if config else {}
+        dbm_new_defaults = {
+            "training_epoch": 8,
+            "init_lr": 1e-3,
+            "regularization_coefficient": 0.01,
+            "max_output_tokens": 1,
+            "log_dir": "logs",
+            "n_features": 16,
+            "temperature_schedule": (0.5, 0.1),  # From MCQA tutorial mask_intervention
+            "batch_size": 16,
+            "evaluation_batch_size": 128,
+            # SelectionHead-style mask intervention parameters from MCQA tutorial
+            "mask_intervention_kwargs": {
+                "use_ln": True,
+                "start_temperature": 0.5,
+                "end_temperature": 0.1,
+                "learnable_temperature": False,
+                "add_gumbel_noise": False,
+                "threshold": 0.5,
+                "straight_through": False,
+                "hard_mask": False,
+                "eps": 1e-6,
+            }
+        }
+        
+        # Update config with defaults (only if not already set)
+        for key, value in dbm_new_defaults.items():
+            if key not in dbm_new_config:
+                dbm_new_config[key] = value
+        
+        # If mask_intervention_kwargs are provided in the config, use them
+        if "mask_intervention_kwargs" in config:
+            dbm_new_config["mask_intervention_kwargs"] = config["mask_intervention_kwargs"]
+        
+        dbm_new_config["method_name"] = "DBM_NEW"
+        experiment = PatchResidualStream(pipeline, task, list(range(start, end)), token_positions, checker, config=dbm_new_config)
+        method_model_dir = os.path.join(model_dir, f"DBM_NEW_{pipeline.model.__class__.__name__}_{'-'.join(target_variables)}")
+        experiment.train_interventions(train_data, target_variables, method="DBM", verbose=verbose, model_dir=method_model_dir)
+        raw_results = experiment.perform_interventions(test_data, verbose=verbose, target_variables_list=[target_variables], save_dir=results_dir)
+        heatmaps(experiment, raw_results, dbm_new_config)
         
         # Release memory before next experiment
         del experiment, raw_results
@@ -192,7 +243,7 @@ def residual_stream_baselines(
 
             experiment = PatchResidualStream(pipeline, task, list(range(start, end)), token_positions, checker, config=config)
             experiment.build_SAE_feature_intervention(sae_loader)
-            method_model_dir = os.path.join(model_dir, f"DBM+SAE_{pipeline.model.__class__.__name__}_{"-".join(target_variables)}")
+            method_model_dir = os.path.join(model_dir, f"DBM+SAE_{pipeline.model.__class__.__name__}_{'-'.join(target_variables)}")
             experiment.train_interventions(train_data, target_variables, method="DBM", verbose=verbose, model_dir=method_model_dir)
             raw_results = experiment.perform_interventions(test_data, verbose=verbose, target_variables_list=[target_variables], save_dir=results_dir)
             heatmaps(experiment, raw_results, config)
@@ -219,7 +270,7 @@ def residual_stream_baselines(
 
             experiment = PatchResidualStream(pipeline, task, list(range(start, end)), token_positions, checker, config=config)
             experiment.build_SAE_feature_intervention(sae_loader)
-            method_model_dir = os.path.join(model_dir, f"DBM+SAE_{pipeline.model.__class__.__name__}_{"-".join(target_variables)}")
+            method_model_dir = os.path.join(model_dir, f"DBM+SAE_{pipeline.model.__class__.__name__}_{'-'.join(target_variables)}")
             experiment.train_interventions(train_data, target_variables, method="DBM", verbose=verbose, model_dir=method_model_dir)
             raw_results = experiment.perform_interventions(test_data, verbose=verbose, target_variables_list=[target_variables], save_dir=results_dir)
             heatmaps(experiment, raw_results, config)
@@ -284,7 +335,7 @@ def attention_head_baselines(
         # Full vector method
         config["method_name"] = "full_vector"
         experiment = PatchAttentionHeads(pipeline, task,  heads_list, token_positions, checker, config=config)
-        method_model_dir = os.path.join(model_dir, f"full_vector_{pipeline.model.__class__.__name__}_{"-".join(target_variables)}")
+        method_model_dir = os.path.join(model_dir, f"full_vector_{pipeline.model.__class__.__name__}_{'-'.join(target_variables)}")
         experiment.save_featurizers(None, method_model_dir)
         raw_results = experiment.perform_interventions(test_data, verbose=verbose, target_variables_list=[target_variables], save_dir=results_dir)
         
@@ -299,7 +350,7 @@ def attention_head_baselines(
         # DAS method
         config["method_name"] = "DAS"
         experiment = PatchAttentionHeads(pipeline, task, heads_list, token_positions, checker, config=config)
-        method_model_dir = os.path.join(model_dir, f"DAS_{pipeline.model.__class__.__name__}_{"-".join(target_variables)}")
+        method_model_dir = os.path.join(model_dir, f"DAS_{pipeline.model.__class__.__name__}_{'-'.join(target_variables)}")
         experiment.train_interventions(train_data, target_variables, method="DAS", verbose=verbose, model_dir=method_model_dir)
         clear_memory()  # Clear memory after training
         raw_results = experiment.perform_interventions(test_data, verbose=verbose, target_variables_list=[target_variables], save_dir=results_dir)
@@ -308,14 +359,64 @@ def attention_head_baselines(
         del experiment, raw_results
         clear_memory()
 
-    if "DBM" not in skip:
+    if "DBM_OLD" not in skip:
         if verbose:
-            print("Running DBM method...")
+            print("Running DBM_OLD method...")
             
-        # DBM method
-        config["method_name"] = "DBM"
+        # DBM_OLD method
+        config["method_name"] = "DBM_OLD"
         experiment = PatchAttentionHeads(pipeline, task, heads_list, token_positions, checker, config=config)
-        method_model_dir = os.path.join(model_dir, f"DBM_{pipeline.model.__class__.__name__}_{"-".join(target_variables)}")
+        method_model_dir = os.path.join(model_dir, f"DBM_OLD_{pipeline.model.__class__.__name__}_{'-'.join(target_variables)}")
+        experiment.train_interventions(train_data, target_variables, method="DBM_OLD", verbose=verbose, model_dir=method_model_dir)
+        raw_results = experiment.perform_interventions(test_data, verbose=verbose, target_variables_list=[target_variables], save_dir=results_dir)
+        
+        # Release memory before next experiment
+        del experiment, raw_results
+        clear_memory()
+
+    if "DBM_NEW" not in skip:
+        if verbose:
+            print("Running DBM_NEW method...")
+            
+        # Set default configuration for DBM_NEW based on MCQA tutorial
+        dbm_new_config = config.copy() if config else {}
+        dbm_new_defaults = {
+            "training_epoch": 8,
+            "init_lr": 1e-3,
+            "regularization_coefficient": 0.01,
+            "max_output_tokens": 1,
+            "log_dir": "logs",
+            "n_features": 16,
+            "temperature_schedule": (0.5, 0.1),  # From MCQA tutorial mask_intervention
+            "batch_size": 16,
+            "evaluation_batch_size": 128,
+            # SelectionHead-style mask intervention parameters from MCQA tutorial
+            "mask_intervention_kwargs": {
+                "use_ln": True,
+                "start_temperature": 0.5,
+                "end_temperature": 0.1,
+                "learnable_temperature": False,
+                "add_gumbel_noise": False,
+                "threshold": 0.5,
+                "straight_through": False,
+                "hard_mask": False,
+                "eps": 1e-6,
+            }
+        }
+        
+        # Update config with defaults (only if not already set)
+        for key, value in dbm_new_defaults.items():
+            if key not in dbm_new_config:
+                dbm_new_config[key] = value
+        
+        # If mask_intervention_kwargs are provided in the config, use them
+        if "mask_intervention_kwargs" in config:
+            dbm_new_config["mask_intervention_kwargs"] = config["mask_intervention_kwargs"]
+        
+        # DBM_NEW method
+        dbm_new_config["method_name"] = "DBM_NEW"
+        experiment = PatchAttentionHeads(pipeline, task, heads_list, token_positions, checker, config=dbm_new_config)
+        method_model_dir = os.path.join(model_dir, f"DBM_NEW_{pipeline.model.__class__.__name__}_{'-'.join(target_variables)}")
         experiment.train_interventions(train_data, target_variables, method="DBM", verbose=verbose, model_dir=method_model_dir)
         raw_results = experiment.perform_interventions(test_data, verbose=verbose, target_variables_list=[target_variables], save_dir=results_dir)
         
@@ -331,7 +432,7 @@ def attention_head_baselines(
         config["method_name"] = "DBM+SVD"
         experiment = PatchAttentionHeads(pipeline, task, heads_list, token_positions, checker, config=config)
         experiment.build_SVD_feature_interventions(train_data, verbose=verbose, PCA=False)
-        method_model_dir = os.path.join(model_dir, f"DBM+SVD_{pipeline.model.__class__.__name__}_{"-".join(target_variables)}")
+        method_model_dir = os.path.join(model_dir, f"DBM+SVD_{pipeline.model.__class__.__name__}_{'-'.join(target_variables)}")
         experiment.train_interventions(train_data, target_variables, method="DBM", verbose=verbose, model_dir=method_model_dir)
         raw_results = experiment.perform_interventions(test_data, verbose=verbose, target_variables_list=[target_variables], save_dir=results_dir)
         
@@ -347,7 +448,7 @@ def attention_head_baselines(
         config["method_name"] = "DBM+PCA"
         experiment = PatchAttentionHeads(pipeline, task, heads_list, token_positions, checker, config=config)
         experiment.build_SVD_feature_interventions(train_data, verbose=verbose, PCA=True)
-        method_model_dir = os.path.join(model_dir, f"DBM+PCA_{pipeline.model.__class__.__name__}_{"-".join(target_variables)}")
+        method_model_dir = os.path.join(model_dir, f"DBM+PCA_{pipeline.model.__class__.__name__}_{'-'.join(target_variables)}")
         experiment.train_interventions(train_data, target_variables, method="DBM", verbose=verbose, model_dir=method_model_dir)
         raw_results = experiment.perform_interventions(test_data, verbose=verbose, target_variables_list=[target_variables], save_dir=results_dir)
         

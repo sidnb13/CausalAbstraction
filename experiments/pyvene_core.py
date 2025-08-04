@@ -617,7 +617,8 @@ def _train_intervention(
                                      (loss, metrics_dict, logging_info)
 
     Returns:
-        None: The trained parameters are stored directly in the model_units' featurizers.
+        Dict: Final training statistics including loss and metrics from the last 10 steps.
+              The trained parameters are stored directly in the model_units' featurizers.
               For mask interventions, feature_indices are also set based on training.
     """
     # ----- Model Initialization ----- #
@@ -842,5 +843,19 @@ def _train_intervention(
             )
             tb_writer.add_text("Selected features", f"Selected features: {indices}")
 
+    # ----- Return Final Statistics ----- #
+    final_stats = {}
+    if aggregated_stats:
+        final_stats["final_loss"] = np.mean(aggregated_stats["loss"][-10:]) if aggregated_stats["loss"] else 0.0
+        if aggregated_stats["metrics"]:
+            # Get the last few metric values and average them
+            recent_metrics = aggregated_stats["metrics"][-10:]
+            for metric_name in recent_metrics[0].keys() if recent_metrics else []:
+                values = [m[metric_name] for m in recent_metrics if metric_name in m]
+                if values:
+                    final_stats[f"final_{metric_name}"] = np.mean(values)
+
     # ----- Cleanup ----- #
     _delete_intervenable_model(intervenable_model)
+    
+    return final_stats

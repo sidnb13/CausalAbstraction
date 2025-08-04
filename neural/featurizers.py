@@ -347,6 +347,8 @@ def build_feature_mask_intervention_old(
 
             # Learnable parameters
             self.mask = torch.nn.Parameter(torch.zeros(n_features), requires_grad=True)
+            torch.nn.init.uniform_(self.mask, a=0.0, b=1.0)
+
             self.temperature: Optional[torch.Tensor] = None  # must be set by user
 
         # -------------------- API helpers -------------------- #
@@ -384,6 +386,9 @@ def build_feature_mask_intervention_old(
 
             gate = self.parameterize()
 
+            # print("GATE", gate)
+            # gate = torch.ones_like(gate, device=gate.device, dtype=gate.dtype)
+
             f_out = (1.0 - gate) * f_base + gate * f_src
             return self._inverse(f_out.to(base.dtype), base_err).to(base.dtype)
 
@@ -391,7 +396,7 @@ def build_feature_mask_intervention_old(
         def get_sparsity_loss(self) -> torch.Tensor:
             if self.temperature is None:
                 raise ValueError("Temperature has not been set.")
-            gate = torch.sigmoid(self.mask / self.temperature)
+            gate = self.parameterize()
             return torch.norm(gate, p=1)
 
         def __str__(self):  # noqa: D401
